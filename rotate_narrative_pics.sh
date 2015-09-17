@@ -3,7 +3,6 @@
 # rotate_narrative_pics.sh 
 #
 #	-d	delete original file after processing
-#               note: this should also rename the metadata files...
 #	-nr	no rotate
 #	-nt	no touch (datestamp)
 #	-q	be quiet (don't "say")
@@ -89,7 +88,7 @@ thisdy=`pwd | awk 'BEGIN { FS = "/" } ; { print $NF }'`
 # be changed to handle command line arguments
 # and single file invocation.
 
-for f in ??????.jpg 
+for f in ??????.jpg
 do
 	# If the JPG has a comment, assumed it has been touched
 	# already and don't mess with it.
@@ -105,7 +104,7 @@ do
 	# break the filename apart from hhmmss to hh, mm, and ss values.
 
 
-	imagename=`basename $f '.jpg' | sed -e 's/ //g'`
+	imagename=${f:0:6}
 
 	thishr=${imagename:0:2}
 	thismn=${imagename:2:2}
@@ -183,28 +182,31 @@ do
 		exiftool -Comment="Processed by $0" $f -o $newfilename > /dev/null
 
 		# Link to the meta/.json and meta/.snap files.
-		# ln in used instead of mv to make it easier to roll back.
+		# cp is used instead of mv to make it easier to roll back.
 		# If -d is used, then the originals are removed from meta as well,
 		# leaving the content but with the new names.
 
-		ln $jsonname $newjsonname
-		ln $snapname $newsnapname
+		if [ -f $jsonname ]; then
+			cp $jsonname $newjsonname && rm -f $jsonname
+		fi
+		if [ -f $snapname ]; then
+			cp $snapname $newsnapname && rm -f $snapname
+		fi
 
 
 		if [ $norotate == 0 ] ; then
-			# Only rotate if there's a delta.
-			if [ $raw_degrees != $rot_degrees ] ; then
-				sips -r $rot_degrees $newfilename 2>&1 > /dev/null
+			if [ $rot_degrees > 0 ] ; then
+				sips -r $rot_degrees $newfilename 1>/dev/null 2>/dev/null
 			fi
 		fi
 
 		if [ $norotate == 0 ] ; then
 			if [ $notouch == 0 ]; then
 				# Rotated and touched
-				mycomment="$f rotated from $raw_degrees to $rot_degrees and touched from $oldtimestamp to $newtimestamp."
+				mycomment="$f rotated from $raw_degrees by $rot_degrees CW and touched from $oldtimestamp to $newtimestamp."
 			else
 				# Only rotated
-				mycomment="$f rotated from $raw_degrees to $rot_degrees."
+				mycomment="$f rotated from $raw_degrees by $rot_degrees."
 			fi
 		else
 			if [ $notouch == 0 ]; then
@@ -222,11 +224,11 @@ do
 		# This has to come after the last file modification command...
 
 		if [ $notouch == 0 ] ; then
-			touch -t $newtimestamp $newfilename $newjsonname $snapname
+			touch -t $newtimestamp $newfilename $newjsonname $newsnapname
 		fi
 
 		if [ $delete == 1 ] ; then
-			rm "${imagename}.jpg" $jsonname $snapname
+			rm "${imagename}.jpg"
 		fi
 	fi
 done
