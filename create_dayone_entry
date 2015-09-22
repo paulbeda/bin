@@ -1,0 +1,9 @@
+#! /bin/bash -x
+
+finish=`grep 'Finish ' $1 | sed -e 's/Finish //'`
+event=`head -3 $1 | tail -1 | sed -e 's/Event //'`
+echo $finish
+echo $event
+
+cat $1 | grep -v '^Start ' | grep -v '^Finish ' | sed -e 's/^Event //' | dayone -d="$finish" new
+
