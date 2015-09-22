@@ -1,0 +1,255 @@
+#! /bin/bash
+#
+# rotate_narrative_pics
+#
+#	-d	delete original file after processing
+#	-nr	no rotate
+#	-ns	rotate exactly and not in 90 degree increments.
+#		will leave corner wedges...
+#	-nt	no touch (datestamp)
+#	-q	be quiet (don't "say")
+#
+# 
+#
+
+delete=0
+norotate=0
+notouch=0
+nosay=0
+nosnap=0
+
+while [[ $# > 0 ]]
+do
+key="$1"
+
+case $key in
+    -h|--help)
+    echo "`basename $0` [-d] [-nr] [-nt] [-q] filespec"
+    echo "-d  Delete original JPG after processing"
+    echo "-nr Do not rotate (just timestamp, unless -nt)"
+    echo "-nt Do not touch (timestamp)"
+    echo "-q  Do not speak"
+    exit
+    ;;
+    -d|--delete)
+    delete=1
+    ;;
+    -nr)
+    norotate=1
+    ;;
+    -ns)
+    nosnap=1
+    ;;
+    -nt)
+    notouch=1
+    ;;
+    -q)
+    nosay=1
+    ;;
+    *)
+            # unknown option
+    ;;
+esac
+shift # past argument or value
+done
+
+#	
+# For each file in the current directory, read the acc_data line from the corresponding
+# json file in the meta subdirectory. Use the value of the second parameter to decide
+# which way to rotate, and then use sips (sips -r degreesCW) to do it.
+#
+# Example json file - 133037.json
+# {
+#  "mag_data": { "samples":[[-74, -262, 256]] },
+#  "acc_data": { "samples":[[-625, -609, 109]] },
+#  "trigger": "timer",
+#  "fw_version": "v0.8.1",
+#  "avg_win": [ 11, 9, 9, 15, 8, 6, 6, 4, 6, 6, 6, 4, 4, 3, 3, 3 ],
+#  "awb_gain": [ 1426, 1024, 1527 ],
+#  "aec_gain": 736,
+#  "aec_exp": 19,
+#  "bat_level": 247,
+#  "avg_readout": 5,
+#  "light_meter": 28
+# }
+
+if [ $nosay == 0 ]; then
+	say I am working on your narrative photos.
+fi
+
+#######################################
+# What DATE where these pictures taken?
+#######################################
+#
+# Narrative maintains a directory hierarchy in the following format:
+# ${NarrativeHome}/YYYY/MM/DD. Locally, this is ~/paulbeda/Pictures/Narrative Photos/20xx/MM/DD.
+#
+# Clip the date parts out of the right side of the current directory.
+#
+
+thisyr=`pwd | awk 'BEGIN { FS = "/" } ; { print $(NF-2) }'`
+thismo=`pwd | awk 'BEGIN { FS = "/" } ; { print $(NF-1) }'`
+thisdy=`pwd | awk 'BEGIN { FS = "/" } ; { print $NF }'`
+
+# The individual JPGs are named HHMMSS.jpg.
+# Process all of the JPG files. This needs to 
+# be changed to handle command line arguments
+# and single file invocation.
+
+for f in ??????.jpg
+do
+	# If the JPG has a comment, assumed it has been touched
+	# already and don't mess with it.
+
+	hascomment=`exiftool $f | grep 'Comment' | wc -l`
+
+	if [ $hascomment -gt 0 ] ; then 
+		echo "Skipping " $f " as it already has a comment."
+		continue
+	fi
+
+	# Strip the .jpg off the filename and 
+	# break the filename apart from hhmmss to hh, mm, and ss values.
+
+
+	imagename=${f:0:6}
+
+	thishr=${imagename:0:2}
+	thismn=${imagename:2:2}
+	thissc=${imagename:4:2}
+
+	# We now have enough values to produce a time string
+
+	oldtimestring=${thismo}${thisdy}${thishr}${thismn}${thisyr}.${thissc}
+	oldtimestamp=`date -j $oldtimestring "+%Y%m%d%H%M.%S"`
+
+	# Narrative uses GMT, so adjust for local time.
+	# Give date the string and ask it to output just the +/-xxxx string.
+        # Truncate that to the first three characters. For ET, that will be -04 in summer, -05 in winter.
+        # Yes, there are timezones that are +/-hhMM, but we'll just do whole hours.
+	# One string is the date-default format.
+	# One string is the filename (timename).
+
+	deltaTZ=`date -j $oldtimestring "+%z" | cut -c 1,3`
+	newtimestamp=`date -j -v${deltaTZ}H $oldtimestring "+%Y%m%d%H%M.%S"`
+	newtimename=`date  -j -v${deltaTZ}H $oldtimestring "+%Y%m%d%H%M%S"`
+
+
+	newfilename="${newtimename}.jpg"
+
+	# We did the date math for time zones, so
+	# let's split it back into pieces.
+
+	newyr=${newtimestamp:0:4}
+	newmo=${newtimestamp:4:2}
+	newdy=${newtimestamp:6:2}
+	newhr=${newtimestamp:8:2}
+	newmn=${newtimestamp:10:2}
+	newsc=${newtimestamp:12:2}
+
+	# Narrative stores metadata in a json file in the "meta" subdirectory.
+	# Assemble the filename - note it uses the hhmmss.jpg name, not our new name.
+
+	jsonname="meta/${imagename}.json"
+	newjsonname="meta/${newtimename}.json"
+
+	snapname="meta/${imagename}.snap"
+	newsnapname="meta/${newtimename}.snap"
+
+	# If the json file exists...then pull out the data and rotate/rename/etc.
+	# If the json file does not exist, then do nothing, just go on to the next file.
+
+
+	if [ -e $jsonname ] ; then 
+
+		# Thanks to Chuck Kahn in Google+ for the algorithm that takes the x/y camera orientation data
+		# and converts it to a camera angle.
+
+		raw_x=`cat $jsonname | grep 'acc_data' | awk '{ print $3}' | sed -e 's/\"samples\":\[\[//' | sed -e 's/,//'`
+		raw_y=`cat $jsonname | grep 'acc_data' | awk '{ print $4}' | sed -e 's/\"samples\":\[\[//' | sed -e 's/,//'`
+		raw_degrees=`echo - | awk "{ print 180.0 * (atan2(0,-1) - atan2(${raw_y}, ${raw_x})) / atan2(0,-1) }"`
+		raw_degrees=${raw_degrees%.*}
+	
+		# Only rotate to the nearest right angle.
+		# sips will rotate to any angle, but fills the
+		# corners with black wedges. Better to crop 
+		# manually. Even better to have a "no snap" CL argument!
+ 
+		if [ $raw_degrees -gt 45 -a $raw_degrees -lt 135 ]; then rot_degrees=90;
+		elif [ $raw_degrees -ge 135 -a $raw_degrees -lt 225 ]; then rot_degrees=180;
+		elif [ $raw_degrees -ge 225 -a $raw_degrees -lt 315 ]; then rot_degrees=270;
+		else rot_degrees=0
+		fi
+	
+		# On the other hand, if we don't want to snap...
+
+		if [ $nosnap == 1 ] ; then
+			rot_degrees=$raw_degrees
+		fi
+
+
+		# Overwrite any existing file.
+
+		rm -f $newfilename
+
+		# Force a comment to generate the new file.
+
+		exiftool -Comment="Processed by $0" $f -o $newfilename > /dev/null
+
+		# Link to the meta/.json and meta/.snap files.
+		# cp is used instead of mv to make it easier to roll back.
+		# If -d is used, then the originals are removed from meta as well,
+		# leaving the content but with the new names.
+
+		if [ -f $jsonname ]; then
+			cp $jsonname $newjsonname && rm -f $jsonname
+		fi
+		if [ -f $snapname ]; then
+			cp $snapname $newsnapname && rm -f $snapname
+		fi
+
+
+		if [ $norotate == 0 ] ; then
+			if [ $rot_degrees > 0 ] ; then
+				sips -r $rot_degrees $newfilename 1>/dev/null 2>/dev/null
+			fi
+		fi
+
+		if [ $norotate == 0 ] ; then
+			if [ $notouch == 0 ]; then
+				# Rotated and touched
+				mycomment="$f rotated from $raw_degrees by $rot_degrees CW and touched from $oldtimestamp to $newtimestamp."
+			else
+				# Only rotated
+				mycomment="$f rotated from $raw_degrees by $rot_degrees."
+			fi
+		else
+			if [ $notouch == 0 ]; then
+				# Only touched
+				mycomment="$f touched from $oldtimestamp to $newtimestamp."
+			else
+				# Did nothing.
+				mycomment="$f renamed only (norotate, notouch)."
+			fi
+		fi
+
+		echo $mycomment
+		exiftool -Comment="$mycomment" -overwrite_original_in_place $newfilename > /dev/null
+
+		# This has to come after the last file modification command...
+
+		if [ $notouch == 0 ] ; then
+			touch -t $newtimestamp $newfilename $newjsonname $newsnapname
+		fi
+
+		if [ $delete == 1 ] ; then
+			rm "${imagename}.jpg"
+		fi
+	fi
+done
+
+
+if [ $nosay == 0 ]; then
+	say Your pictures have been processed.
+fi
+
