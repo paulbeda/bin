@@ -1,0 +1,60 @@
+#! /bin/bash
+
+# A quick (brute force) way of getting iPhone JPG metadata converted to local time.
+
+filename="$1"
+
+photodatestamp=`mdls $filename | grep kMDItemGPSDateStamp | sed -e 's/^.*= //' | sed -e 's/:/-/g' | sed -e 's/\"//g'`
+phototimestamp=`mdls $filename | grep kMDItemTimestamp | sed -e 's/^.*= //' | sed -e 's/\"//g'`
+
+# 
+# If the photodatestamp and phototimestamp are empty, 
+# then see if there's a Comment field from rotate_narrative_images
+# If it came from rotate_narrative_images, then it is already TZ-adjusted, too.
+#
+
+if [ -z $photodatestamp ]; then
+	mdcomment=`exiftool -Comment -l $filename | grep touched |  sed -e 's/^.*touched//' | sed -e 's/^.*to //' | sed -e 's/\.//'`
+	if [ $mdcomment ] ; then
+		year=${mdcomment:0:4}		
+		month=${mdcomment:4:2}		
+		day=${mdcomment:6:2}		
+		hour=${mdcomment:8:2}		
+		min=${mdcomment:10:2}		
+		sec=${mdcomment:12:2}		
+	fi
+	mmddhhmmccyyss=`echo $month$day$hour$min$year.$sec`
+
+	#
+	# The DayOne CLI makes a Mac OS call that assumes UTC, so roll this FORWARD to UTC.
+	#
+
+	deltaTZ=`date -j $mmddhhmmccyyss "+%z" | cut -c 3`
+	phototimestamp=`date  -j -v+${deltaTZ}H $mmddhhmmccyyss "+%Y-%m-%d %H:%M:%S"`
+else
+	# Some iPhoto JPG files do not have a kMDItemTimestamp field, reason not yet known.
+	# This causes errors the rest of the way through the script, but the dayone cli
+	# tool, when it gets an empty date after -d=, defaults to the current time.
+	
+	year=`echo $photodatestamp | awk 'BEGIN { FS = "-" } ; { print $1 }'`
+	month=`echo $photodatestamp | awk 'BEGIN { FS = "-" } ; { print $2 }'`
+	day=`echo $photodatestamp | awk 'BEGIN { FS = "-" } ; { print $3 }'`
+	hour=`echo $phototimestamp | awk 'BEGIN { FS = ":" } ; { print $1 }'`
+	min=`echo $phototimestamp | awk 'BEGIN { FS = ":" } ; { print $2 }'`
+	sec=`echo $phototimestamp | awk 'BEGIN { FS = ":" } ; { print $3 }'`
+
+	mmddhhmmccyyss=`echo $month$day$hour$min$year.$sec`
+
+	# Adjust for the timezone against HHMM.SS.
+
+	# 201509220558 - Seems it's wrong more than it's right. Commented out temporarily.
+
+	# deltaTZ=`date -j $mmddhhmmccyyss "+%z" | cut -c 1,3`
+	# phototimestamp=`date  -j -v${deltaTZ}H $mmddhhmmccyyss "+%Y-%m-%d %H:%M:%S"`
+fi
+
+echo dayone -d="$phototimestamp" -p=$filename new ...  
+dayone -d="$phototimestamp" -p=$filename new <<!
+$filename
+!
+exit $?
